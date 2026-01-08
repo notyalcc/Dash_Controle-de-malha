@@ -618,6 +618,7 @@ with tab_geral:
             value=[default_start, max_date_g],
             min_value=min_date_g,
             max_value=max_date_g,
+            format="DD/MM/YYYY",
             key="filter_geral_dates"
         )
         
@@ -692,7 +693,8 @@ with tab_dia:
                 "Selecione a Data:", 
                 value=datas_disponiveis[-1], 
                 min_value=min(datas_disponiveis), 
-                max_value=max(datas_disponiveis)
+                max_value=max(datas_disponiveis),
+                format="DD/MM/YYYY"
             )
             df_dia_view = df_base_indep[df_base_indep['DATA'].dt.date == data_selecionada]
             dia_label = data_selecionada.strftime('%d/%m/%Y')
@@ -795,7 +797,7 @@ with st.expander("Ver Dados Detalhados / Editar"):
         df_edited = st.data_editor(
             df_filtered[cols_base].sort_values(by=['DATA', 'TRANSPORTADORA']),
             num_rows="dynamic",
-            use_container_width=True,
+            width="stretch",
             key="editor_dados",
             column_config={
                 "DATA": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
@@ -840,7 +842,7 @@ with st.expander("Ver Dados Detalhados / Editar"):
 
         st.data_editor(
             df_display.sort_values(by=['DATA', 'TRANSPORTADORA']),
-            use_container_width=True,
+            width="stretch",
             disabled=True,
             column_config={
                 "DATA": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
