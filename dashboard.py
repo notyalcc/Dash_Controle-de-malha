@@ -346,7 +346,14 @@ if acesso_liberado:
             if not f_transp:
                 st.sidebar.warning("⚠️ O campo 'Transportadora' é obrigatório.")
             else:
-                new_row = {'DATA': [pd.to_datetime(f_data)], 'TRANSPORTADORA': [f_transp], 'LIBERADOS': [f_lib], 'MALHA': [f_malha], 'OPERAÇÃO': [f_op]}
+                new_row = {
+                    'DATA': [pd.to_datetime(f_data)], 
+                    'TRANSPORTADORA': [f_transp], 
+                    'LIBERADOS': [f_lib], 
+                    'MALHA': [f_malha], 
+                    'OPERAÇÃO': [f_op],
+                    'TOTAL TRANSPORTADORAS': [f_lib + f_malha]
+                }
                 df_new = pd.DataFrame(new_row)
                 
                 try:
@@ -359,7 +366,8 @@ if acesso_liberado:
                     # Persistência
                     salvo = save_data_to_github(st.session_state['df_dados'])
                     if not salvo:
-                        df_new.to_sql(TABLE_NAME, engine, if_exists='append', index=False)
+                        # Salva o dataframe COMPLETO para garantir consistência (Excel + Novos)
+                        st.session_state['df_dados'].to_sql(TABLE_NAME, engine, if_exists='replace', index=False)
                         
                     st.success("Salvo no Banco de Dados com sucesso!")
                     st.rerun()
