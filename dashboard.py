@@ -85,7 +85,17 @@ if 'df_dados' not in st.session_state:
         
         if df_start is None:
             # Se não tem GitHub ou falhou, tenta ler do banco local (SQLite)
-            df_start = pd.read_sql(f"SELECT * FROM {TABLE_NAME}", con=engine, parse_dates=['DATA'])
+            try:
+                df_start = pd.read_sql(f"SELECT * FROM {TABLE_NAME}", con=engine, parse_dates=['DATA'])
+            except:
+                df_start = pd.DataFrame()
+            
+            # Se o banco estiver vazio ou falhar, tenta ler o Excel local (igual ao teste_validacao.py)
+            if df_start.empty and os.path.exists('dados.xlsx'):
+                try:
+                    df_start = pd.read_excel('dados.xlsx')
+                except Exception:
+                    pass
             
         # Garante tipos corretos
         df_start.columns = df_start.columns.str.strip().str.upper()
@@ -100,7 +110,7 @@ if 'df_dados' not in st.session_state:
 def save_uploaded_data(df, replace=False):
     try:
         # Colunas esperadas
-        expected_cols = ['DATA', 'TRANSPORTADORA', 'OPERAÇÃO', 'LIBERADOS', 'MALHA']
+        expected_cols = ['DATA', 'TRANSPORTADORA', 'OPERAÇÃO', 'LIBERADOS', 'MALHA', 'TOTAL TRANSPORTADORAS']
         # Filtra colunas existentes no DF carregado
         cols_to_save = [c for c in expected_cols if c in df.columns]
         
@@ -108,10 +118,13 @@ def save_uploaded_data(df, replace=False):
             if replace:
                 st.session_state['df_dados'] = df[cols_to_save].copy()
             else:
-                st.session_state['df_dados'] = pd.concat([st.session_state['df_dados'], df[cols_to_save]], ignore_index=True)
+                if st.session_state['df_dados'].empty:
+                    st.session_state['df_dados'] = df[cols_to_save].copy()
+                else:
+                    st.session_state['df_dados'] = pd.concat([st.session_state['df_dados'], df[cols_to_save]], ignore_index=True)
             
             # Remove duplicatas exatas para evitar sujeira nos dados
-            st.session_state['df_dados'] = st.session_state['df_dados'].drop_duplicates()
+            # st.session_state['df_dados'] = st.session_state['df_dados'].drop_duplicates()
             
             # Tenta salvar no GitHub
             salvo_github = save_data_to_github(st.session_state['df_dados'])
@@ -131,6 +144,13 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """Realiza a limpeza e padronização dos dados."""
     # Padronizar nomes das colunas
     df.columns = df.columns.str.strip().str.upper()
+
+    # 1. Garantir numéricos (Mover para o início para permitir cálculos de perda)
+    for col in ['LIBERADOS', 'MALHA', 'TOTAL TRANSPORTADORAS']:
+        if col in df.columns:
+            if df[col].dtype == 'object':
+                df[col] = df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.')
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
     if 'DATA' in df.columns:
         # Só executa a limpeza pesada se NÃO for data ainda
@@ -160,17 +180,12 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             df['DATA'] = dates_iso
             
             # Verifica e remove linhas que continuam inválidas
-            linhas_invalidas = df['DATA'].isna().sum()
+            mask_invalid = df['DATA'].isna()
+            linhas_invalidas = mask_invalid.sum()
             if linhas_invalidas > 0:
-                st.warning(f"⚠️ Atenção: {linhas_invalidas} linhas foram removidas pois a coluna 'DATA' contém valores inválidos ou vazios.")
+                vol_perdido = df.loc[mask_invalid, ['LIBERADOS', 'MALHA']].sum().sum()
+                st.warning(f"⚠️ Atenção: {linhas_invalidas} linhas foram removidas pois a coluna 'DATA' contém valores inválidos/vazios. Volume total ignorado nestas linhas: {vol_perdido:,.0f}")
                 df = df.dropna(subset=['DATA'])
-
-    # Garantir numéricos
-    for col in ['LIBERADOS', 'MALHA']:
-        if col in df.columns:
-            if df[col].dtype == 'object':
-                df[col] = df[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.')
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     
     return df
 
@@ -330,7 +345,10 @@ if acesso_liberado:
                 
                 try:
                     # Atualiza session state
-                    st.session_state['df_dados'] = pd.concat([st.session_state['df_dados'], df_new], ignore_index=True)
+                    if st.session_state['df_dados'].empty:
+                        st.session_state['df_dados'] = df_new.copy()
+                    else:
+                        st.session_state['df_dados'] = pd.concat([st.session_state['df_dados'], df_new], ignore_index=True)
                     
                     # Persistência
                     salvo = save_data_to_github(st.session_state['df_dados'])
@@ -404,9 +422,20 @@ if acesso_liberado:
     )
 
     # Botão para recarregar dados (Limpar Cache)
-    if st.sidebar.button("🔄 Atualizar Dados (DB)"):
+    st.sidebar.subheader("Gerenciamento de Dados")
+    col_btn1, col_btn2 = st.sidebar.columns(2)
+    
+    if col_btn1.button("🔄 Recarregar DB"):
         del st.session_state['df_dados']
         st.rerun()
+        
+    if os.path.exists('dados.xlsx'):
+        if col_btn2.button("📂 Ler Excel Local"):
+            try:
+                st.session_state['df_dados'] = load_data(open('dados.xlsx', 'rb'))
+                st.rerun()
+            except Exception as e:
+                st.sidebar.error(f"Erro: {e}")
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("Desenvolvido por **Clayton S. Silva**")
@@ -500,7 +529,13 @@ with st.expander("ℹ️ Entenda o Processo de Malha Fina (Auditoria)"):
 # Período Atual
 total_liberados = df_filtered['LIBERADOS'].sum()
 total_malha = df_filtered['MALHA'].sum()
-total_veiculos = total_liberados + total_malha
+
+# Tenta usar a coluna de Total do Excel se existir (para bater com os 68.128), senão calcula a soma
+if 'TOTAL TRANSPORTADORAS' in df_filtered.columns and df_filtered['TOTAL TRANSPORTADORAS'].sum() > 0:
+    total_veiculos = df_filtered['TOTAL TRANSPORTADORAS'].sum()
+else:
+    total_veiculos = total_liberados + total_malha
+
 taxa_malha_global = (total_malha / total_veiculos * 100) if total_veiculos > 0 else 0
 
 # Período Anterior (para cálculo do Delta)
@@ -515,7 +550,11 @@ df_prev = df[
     (df['TRANSPORTADORA'].isin(transportadoras))
 ]
 
-total_veiculos_prev = df_prev['LIBERADOS'].sum() + df_prev['MALHA'].sum()
+if 'TOTAL TRANSPORTADORAS' in df_prev.columns and df_prev['TOTAL TRANSPORTADORAS'].sum() > 0:
+    total_veiculos_prev = df_prev['TOTAL TRANSPORTADORAS'].sum()
+else:
+    total_veiculos_prev = df_prev['LIBERADOS'].sum() + df_prev['MALHA'].sum()
+
 total_liberados_prev = df_prev['LIBERADOS'].sum()
 total_malha_prev = df_prev['MALHA'].sum()
 taxa_malha_prev = (total_malha_prev / total_veiculos_prev * 100) if total_veiculos_prev > 0 else 0
@@ -817,7 +856,10 @@ with st.expander("Ver Dados Detalhados / Editar"):
                 df_full = df_full.drop(indices_originais, errors='ignore')
                 
                 # Adiciona as linhas que vieram do editor
-                df_full = pd.concat([df_full, df_edited], ignore_index=True)
+                if df_full.empty:
+                    df_full = df_edited.copy()
+                else:
+                    df_full = pd.concat([df_full, df_edited], ignore_index=True)
                 
                 # Limpeza e Persistência
                 df_full = clean_dataframe(df_full)
