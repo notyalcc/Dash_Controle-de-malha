@@ -121,10 +121,16 @@ def save_uploaded_data(df, replace=False):
                 if st.session_state['df_dados'].empty:
                     st.session_state['df_dados'] = df[cols_to_save].copy()
                 else:
-                    st.session_state['df_dados'] = pd.concat([st.session_state['df_dados'], df[cols_to_save]], ignore_index=True)
-            
-            # Remove duplicatas exatas para evitar sujeira nos dados
-            # st.session_state['df_dados'] = st.session_state['df_dados'].drop_duplicates()
+                    # Concatena os dados existentes com os novos
+                    df_combined = pd.concat([st.session_state['df_dados'], df[cols_to_save]], ignore_index=True)
+                    
+                    # Remove duplicatas para garantir que apenas dados novos sejam mantidos
+                    rows_before = len(df_combined)
+                    st.session_state['df_dados'] = df_combined.drop_duplicates()
+                    rows_after = len(st.session_state['df_dados'])
+                    
+                    if rows_before > rows_after:
+                        st.sidebar.info(f"ℹ️ {rows_before - rows_after} registros duplicados foram ignorados (já existiam no banco).")
             
             # Tenta salvar no GitHub
             salvo_github = save_data_to_github(st.session_state['df_dados'])
